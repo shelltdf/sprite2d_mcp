@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""Node.js dev entry: Vite dev server (blocks)."""
+import os
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+os.chdir(ROOT)
+
+
+def main() -> int:
+    if not os.path.isdir(os.path.join(ROOT, "node_modules")):
+        subprocess.check_call("npm install", shell=True)
+    return subprocess.call("npm run dev", shell=True)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
