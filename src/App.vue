@@ -3,25 +3,43 @@
     <MenuBar />
     <ToolBar />
     <div class="win-main">
-      <SpriteListPanel />
-      <Canvas2D />
+      <LeftDock />
+      <div class="win-center-column">
+        <Canvas2D />
+        <AnimationTimelineDock />
+      </div>
       <PropertyPanel />
     </div>
     <StatusBar />
+    <SpriteContextMenu />
   </div>
 </template>
 
 <script setup>
-import { onMounted, onUnmounted } from "vue";
+import { onMounted, onUnmounted, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import MenuBar from "./components/MenuBar.vue";
 import ToolBar from "./components/ToolBar.vue";
-import SpriteListPanel from "./components/SpriteListPanel.vue";
+import LeftDock from "./components/LeftDock.vue";
 import Canvas2D from "./components/Canvas2D.vue";
+import AnimationTimelineDock from "./components/AnimationTimelineDock.vue";
 import PropertyPanel from "./components/PropertyPanel.vue";
 import StatusBar from "./components/StatusBar.vue";
+import SpriteContextMenu from "./components/SpriteContextMenu.vue";
 import { useProjectStore } from "./stores/project.js";
 
 const store = useProjectStore();
+const { locale, t } = useI18n();
+
+watch(
+  locale,
+  (l) => {
+    document.documentElement.lang = l === "zh-CN" ? "zh-CN" : "en-US";
+    document.title = t("app.title");
+    store.syncSelectionStatus();
+  },
+  { immediate: true }
+);
 
 function hotkey(e) {
   const t = e.target;
@@ -42,7 +60,8 @@ function hotkey(e) {
   }
   if (e.key === "Delete") {
     e.preventDefault();
-    store.deleteSelection();
+    if (store.selectedAnimationId) store.deleteSelectedAnimation();
+    else store.deleteSelection();
   }
 }
 

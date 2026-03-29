@@ -5,7 +5,13 @@
       <span v-if="store.selectedCount === 1 && store.selected" class="sel-tag">{{
         store.selected.name
       }}</span>
-      <span v-else-if="store.selectedCount > 1" class="sel-tag">{{ store.selectedCount }} 个精灵</span>
+      <span v-else-if="store.selectedCount > 1" class="sel-tag">{{
+        t("status.barSprites", { n: store.selectedCount })
+      }}</span>
+      <span
+        v-else-if="store.selectedAnimationId && store.selectedAnimation"
+        class="sel-tag"
+      >{{ t("status.barAnim", { name: store.selectedAnimation.name }) }}</span>
       <span class="zoom-tag">{{ zoomPct }}%</span>
     </span>
   </footer>
@@ -13,8 +19,10 @@
 
 <script setup>
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { useProjectStore } from "../stores/project.js";
 
+const { t } = useI18n();
 const store = useProjectStore();
 const zoomPct = computed(() => Math.round(store.view.scale * 100));
 </script>
@@ -27,8 +35,13 @@ const zoomPct = computed(() => Math.round(store.view.scale * 100));
   height: 22px;
   padding: 0 8px;
   font-size: 11px;
-  background: linear-gradient(to bottom, #f7f7f7, #ececec);
+  background: linear-gradient(
+    to bottom,
+    var(--win-tool-from, #f7f7f7),
+    var(--win-tool-to, #ececec)
+  );
   border-top: 1px solid var(--win-border, #d0d0d0);
+  color: var(--win-text, inherit);
 }
 
 .status-msg {
@@ -47,12 +60,13 @@ const zoomPct = computed(() => Math.round(store.view.scale * 100));
 }
 
 .sel-tag {
-  color: #333;
+  color: var(--win-text, #333);
 }
 
 .zoom-tag {
   min-width: 40px;
   text-align: right;
-  color: #555;
+  color: var(--win-text, #555);
+  opacity: 0.85;
 }
 </style>

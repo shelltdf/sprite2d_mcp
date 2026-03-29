@@ -1,3 +1,5 @@
+import { ensureSpriteGeometry, defaultPivot, defaultInset } from "./spriteGeometry.js";
+
 const PADDING = 2;
 const WRAP_W = 1024;
 
@@ -13,6 +15,7 @@ export function layoutAtlas(sprites) {
   let atlasH = PADDING;
 
   const placed = sprites.map((s) => {
+    ensureSpriteGeometry(s);
     const w = Math.max(1, Math.round(s.frame.w));
     const h = Math.max(1, Math.round(s.frame.h));
     if (x + w + PADDING > WRAP_W && x > PADDING) {
@@ -37,6 +40,13 @@ export function layoutAtlas(sprites) {
       sw: w,
       sh: h,
       color: hashColor(s.id),
+      pivot: { x: s.pivot.x, y: s.pivot.y },
+      inset: {
+        top: s.inset.top,
+        right: s.inset.right,
+        bottom: s.inset.bottom,
+        left: s.inset.left,
+      },
     };
   });
 
@@ -151,7 +161,24 @@ export function buildAtlasJson(placed) {
     {
       version: 1,
       image: "atlas.png",
-      sprites: placed.map(({ name, x, y, w, h }) => ({ name, x, y, w, h })),
+      sprites: placed.map((p) => {
+        const piv = p.pivot || defaultPivot();
+        const ins = p.inset || defaultInset();
+        return {
+          name: p.name,
+          x: p.x,
+          y: p.y,
+          w: p.w,
+          h: p.h,
+          pivot: { x: piv.x, y: piv.y },
+          inset: {
+            top: ins.top,
+            right: ins.right,
+            bottom: ins.bottom,
+            left: ins.left,
+          },
+        };
+      }),
     },
     null,
     2

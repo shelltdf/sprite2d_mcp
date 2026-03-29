@@ -4,6 +4,8 @@
 
 - `ai-software-engineering/`：四阶段文档（勿放置实现代码）。
 - 仓库根：`package.json`、`vite.config.js`、`src/`：Vue 实现。
+- 文案：`src/locales/zh-CN.json`、`en-US.json`；`src/i18n/index.js` 创建 i18n 实例。
+- 主题：`src/styles/theme.css`（`--win-*`），`src/stores/ui.js`；`App.vue` 在语言切换时刷新 `document.documentElement.lang` 与标题。
 
 ## 依赖
 

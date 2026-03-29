@@ -13,10 +13,21 @@ classDiagram
     +number w
     +number h
   }
+  class Animation {
+    +string id
+    +string name
+    +AnimFrame[] frames
+  }
+  class AnimFrame {
+    +string spriteId
+    +number durationMs
+  }
   class ProjectState {
     +string name
     +Sprite[] sprites
+    +Animation[] animations
     +string[] selectedIds
+    +string selectedAnimationId
     +View view
     +string statusMessage
   }
@@ -26,6 +37,8 @@ classDiagram
     +number offsetY
   }
   Sprite --> Frame
+  Animation --> AnimFrame
   ProjectState --> Sprite
+  ProjectState --> Animation
   ProjectState --> View
 ```

@@ -5,21 +5,24 @@ import {
   triggerDownload,
 } from "../lib/compileAtlas.js";
 import { parseAtlasJson } from "../lib/atlasFormat.js";
+import {
+  defaultInset,
+  defaultPivot,
+  ensureSpriteGeometry,
+} from "../lib/spriteGeometry.js";
+import { T } from "../i18n/translate.js";
 
 /** @typedef {{ x: number, y: number, w: number, h: number }} Frame */
-/** @typedef {{ id: string, name: string, frame: Frame }} Sprite */
-/** @typedef {{ name: string, frame: Frame }} SpriteClipboardRow */
-
-function baseName(filename) {
-  const s = filename.replace(/[/\\]/g, "/").split("/").pop() || "Sheet";
-  return s.replace(/\.[^.]+$/, "") || "Sheet";
-}
+/** @typedef {{ id: string, name: string, frame: Frame, pivot: { x: number, y: number }, inset: { top: number, right: number, bottom: number, left: number } }} Sprite */
+/** @typedef {{ name: string, frame: Frame, pivot: { x: number, y: number }, inset: { top: number, right: number, bottom: number, left: number } }} SpriteClipboardRow */
+/** @typedef {{ spriteId: string, durationMs: number }} AnimFrame */
+/** @typedef {{ id: string, name: string, frames: AnimFrame[] }} Animation */
 
 function readFileAsDataURL(file) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onload = () => resolve(/** @type {string} */ (r.result));
-    r.onerror = () => reject(new Error("读取文件失败"));
+    r.onerror = () => reject(new Error(T("errors.readFileFailed")));
     r.readAsDataURL(file);
   });
 }
@@ -28,7 +31,7 @@ function readFileAsText(file) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onload = () => resolve(/** @type {string} */ (r.result));
-    r.onerror = () => reject(new Error("读取文件失败"));
+    r.onerror = () => reject(new Error(T("errors.readFileFailed")));
     r.readAsText(file);
   });
 }
@@ -39,31 +42,61 @@ function newSprite(index, sheetW, sheetH) {
     const h = Math.min(64, sheetH);
     const x = Math.max(0, Math.floor((sheetW - w) / 2));
     const y = Math.max(0, Math.floor((sheetH - h) / 2));
-    return {
+    const s = {
       id: crypto.randomUUID(),
-      name: `Sprite ${index + 1}`,
+      name: T("default.spriteName", { n: index + 1 }),
       frame: { x, y, w, h },
+      pivot: defaultPivot(),
+      inset: defaultInset(),
     };
+    ensureSpriteGeometry(s);
+    return s;
   }
   const n = 32 + (index % 5) * 16;
+  const s = {
+    id: crypto.randomUUID(),
+    name: T("default.spriteName", { n: index + 1 }),
+    frame: { x: 20 + (index % 4) * 40, y: 20 + (index % 3) * 36, w: n, h: n },
+    pivot: defaultPivot(),
+    inset: defaultInset(),
+  };
+  ensureSpriteGeometry(s);
+  return s;
+}
+
+function newAnimation(index, defaultSpriteId) {
+  /** @type {AnimFrame[]} */
+  const frames = [];
+  if (defaultSpriteId) {
+    frames.push({ spriteId: defaultSpriteId, durationMs: 100 });
+  }
   return {
     id: crypto.randomUUID(),
-    name: `Sprite ${index + 1}`,
-    frame: { x: 20 + (index % 4) * 40, y: 20 + (index % 3) * 36, w: n, h: n },
+    name: T("default.animName", { n: index + 1 }),
+    frames,
   };
 }
 
-function rectsIntersect(
-  ax,
-  ay,
-  aw,
-  ah,
-  bx,
-  by,
-  bw,
-  bh
-) {
+function rectsIntersect(ax, ay, aw, ah, bx, by, bw, bh) {
   return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+}
+
+function normalizeAnimations(raw, sprites) {
+  const spriteIds = new Set(sprites.map((s) => s.id));
+  if (!Array.isArray(raw)) return [];
+  return raw.map((a, i) => {
+    const id = a.id || crypto.randomUUID();
+    const name = a.name || T("default.animName", { n: i + 1 });
+    const frames = Array.isArray(a.frames)
+      ? a.frames
+          .map((f) => ({
+            spriteId: String(f.spriteId || ""),
+            durationMs: Math.max(1, Number(f.durationMs) || 100),
+          }))
+          .filter((f) => spriteIds.has(f.spriteId))
+      : [];
+    return { id, name, frames };
+  });
 }
 
 export const useProjectStore = defineStore("project", {
@@ -73,9 +106,14 @@ export const useProjectStore = defineStore("project", {
     sprites: [],
     /** @type {string[]} */
     selectedIds: [],
+    /** @type {Animation[]} */
+    animations: [],
+    /** @type {string | null} */
+    selectedAnimationId: null,
+    /** 时间线 / 属性面板当前高亮的动画帧下标 */
+    selectedTimelineFrameIndex: /** @type {number | null} */ (null),
     view: { scale: 1, offsetX: 0, offsetY: 0 },
-    statusMessage: "就绪",
-    /** 精灵表底图（data URL） */
+    statusMessage: T("status.ready"),
     sheetImageDataUrl: /** @type {string | null} */ (null),
     sheetFileName: null,
     sheetWidth: 0,
@@ -87,7 +125,6 @@ export const useProjectStore = defineStore("project", {
     selectedIdsSet(state) {
       return new Set(state.selectedIds);
     },
-    /** 主选（属性面板） */
     selected(state) {
       const id = state.selectedIds[0];
       if (!id) return null;
@@ -96,18 +133,48 @@ export const useProjectStore = defineStore("project", {
     selectedCount(state) {
       return state.selectedIds.length;
     },
-    /** @returns {Sprite[]} */
     selectedSprites(state) {
       const set = new Set(state.selectedIds);
       return state.sprites.filter((s) => set.has(s.id));
     },
+    selectedAnimation(state) {
+      if (!state.selectedAnimationId) return null;
+      return (
+        state.animations.find((a) => a.id === state.selectedAnimationId) || null
+      );
+    },
   },
   actions: {
+    blurAnimationSelection() {
+      this.selectedAnimationId = null;
+    },
     isSelected(id) {
       return this.selectedIds.includes(id);
     },
     setStatus(msg) {
       this.statusMessage = msg;
+    },
+    syncSelectionStatus() {
+      const n = this.selectedIds.length;
+      if (n > 0) {
+        if (n === 1) {
+          const s = this.selected;
+          this.setStatus(
+            s ? T("status.selectedSprite", { name: s.name }) : T("status.ready")
+          );
+        } else this.setStatus(T("status.selectedSprites", { n }));
+        return;
+      }
+      if (this.selectedAnimationId) {
+        const a = this.animations.find(
+          (x) => x.id === this.selectedAnimationId
+        );
+        this.setStatus(
+          a ? T("status.selectedAnim", { name: a.name }) : T("status.ready")
+        );
+        return;
+      }
+      this.setStatus(T("status.ready"));
     },
     setSelection(ids) {
       const seen = new Set();
@@ -119,21 +186,20 @@ export const useProjectStore = defineStore("project", {
         next.push(id);
       }
       this.selectedIds = next;
+      if (next.length > 0) {
+        this.selectedAnimationId = null;
+        this.selectedTimelineFrameIndex = null;
+      }
       this.syncSelectionStatus();
     },
+    /** 仅清除精灵选中（不取消当前选中的动画序列） */
     clearSelection() {
       this.selectedIds = [];
       this.syncSelectionStatus();
     },
-    syncSelectionStatus() {
-      const n = this.selectedIds.length;
-      if (n === 0) this.setStatus("就绪");
-      else if (n === 1) {
-        const s = this.selected;
-        this.setStatus(s ? `选中: ${s.name}` : "就绪");
-      } else this.setStatus(`已选中 ${n} 个精灵`);
-    },
     addToSelection(ids) {
+      this.selectedAnimationId = null;
+      this.selectedTimelineFrameIndex = null;
       const set = new Set(this.selectedIds);
       for (const id of ids) {
         if (this.sprites.some((s) => s.id === id)) set.add(id);
@@ -142,6 +208,8 @@ export const useProjectStore = defineStore("project", {
       this.syncSelectionStatus();
     },
     toggleSelection(id) {
+      this.selectedAnimationId = null;
+      this.selectedTimelineFrameIndex = null;
       if (!this.sprites.some((s) => s.id === id)) return;
       const i = this.selectedIds.indexOf(id);
       if (i >= 0) {
@@ -152,6 +220,8 @@ export const useProjectStore = defineStore("project", {
       this.syncSelectionStatus();
     },
     selectByMarquee(x0, y0, x1, y1, additive) {
+      this.selectedAnimationId = null;
+      this.selectedTimelineFrameIndex = null;
       const minX = Math.min(x0, x1);
       const minY = Math.min(y0, y1);
       const maxX = Math.max(x0, x1);
@@ -169,17 +239,106 @@ export const useProjectStore = defineStore("project", {
       if (additive) this.addToSelection(picked);
       else this.setSelection(picked);
     },
+    /** @param {string | null} id */
+    selectAnimation(id) {
+      this.selectedIds = [];
+      this.selectedAnimationId = id;
+      this.selectedTimelineFrameIndex = null;
+      this.syncSelectionStatus();
+    },
+    /** @param {number} index */
+    selectTimelineFrame(index) {
+      const a = this.selectedAnimation;
+      if (!a || index < 0 || index >= a.frames.length) return;
+      this.selectedTimelineFrameIndex = index;
+    },
+    clearTimelineFrameSelect() {
+      this.selectedTimelineFrameIndex = null;
+    },
+    addAnimation() {
+      const def =
+        this.selectedIds.length === 1 ? this.selectedIds[0] : this.sprites[0]?.id;
+      const a = newAnimation(this.animations.length, def || null);
+      this.animations.push(a);
+      this.selectAnimation(a.id);
+      this.setStatus(T("status.newAnim", { name: a.name }));
+    },
+    deleteSelectedAnimation() {
+      if (!this.selectedAnimationId) return;
+      const id = this.selectedAnimationId;
+      this.animations = this.animations.filter((a) => a.id !== id);
+      this.selectedAnimationId = null;
+      this.selectedTimelineFrameIndex = null;
+      this.syncSelectionStatus();
+      this.setStatus(T("status.animDeleted"));
+    },
+    updateAnimationName(name) {
+      const a = this.selectedAnimation;
+      if (!a) return;
+      a.name = String(name);
+      this.syncSelectionStatus();
+    },
+    /** @param {string} spriteId */
+    addAnimFrame(spriteId) {
+      const a = this.selectedAnimation;
+      if (!a || !this.sprites.some((s) => s.id === spriteId)) return;
+      a.frames.push({ spriteId, durationMs: 100 });
+    },
+    /** @param {number} index */
+    removeAnimFrame(index) {
+      const a = this.selectedAnimation;
+      if (!a) return;
+      a.frames.splice(index, 1);
+      const ti = this.selectedTimelineFrameIndex;
+      if (ti != null) {
+        if (ti === index) this.selectedTimelineFrameIndex = null;
+        else if (ti > index) this.selectedTimelineFrameIndex = ti - 1;
+      }
+    },
+    /** @param {number} index */
+    moveAnimFrame(index, delta) {
+      const a = this.selectedAnimation;
+      if (!a) return;
+      const j = index + delta;
+      if (j < 0 || j >= a.frames.length) return;
+      const t = a.frames[index];
+      a.frames[index] = a.frames[j];
+      a.frames[j] = t;
+      this.selectedTimelineFrameIndex = null;
+    },
+    /** @param {number} index @param {number} ms */
+    setAnimFrameDuration(index, ms) {
+      const a = this.selectedAnimation;
+      if (!a || !a.frames[index]) return;
+      a.frames[index].durationMs = Math.max(1, Number(ms) || 100);
+    },
+    /** @param {number} index @param {string} spriteId */
+    setAnimFrameSprite(index, spriteId) {
+      const a = this.selectedAnimation;
+      if (!a || !a.frames[index]) return;
+      if (!this.sprites.some((s) => s.id === spriteId)) return;
+      a.frames[index].spriteId = spriteId;
+    },
+    removeSpriteRefsFromAnimations(removedIds) {
+      const set = new Set(removedIds);
+      for (const a of this.animations) {
+        a.frames = a.frames.filter((f) => !set.has(f.spriteId));
+      }
+    },
     newProject() {
       this.name = "Untitled";
       this.sprites = [];
       this.selectedIds = [];
+      this.animations = [];
+      this.selectedAnimationId = null;
+      this.selectedTimelineFrameIndex = null;
       this.view = { scale: 1, offsetX: 0, offsetY: 0 };
       this.sheetImageDataUrl = null;
       this.sheetFileName = null;
       this.sheetWidth = 0;
       this.sheetHeight = 0;
       this.spriteClipboard = [];
-      this.setStatus("已新建工程");
+      this.setStatus(T("status.newProject"));
     },
     addSprite() {
       const s = newSprite(
@@ -189,7 +348,7 @@ export const useProjectStore = defineStore("project", {
       );
       this.sprites.push(s);
       this.setSelection([s.id]);
-      this.setStatus(`已添加 ${s.name}`);
+      this.setStatus(T("status.addedSprite", { name: s.name }));
     },
     selectAllSprites() {
       this.setSelection(this.sprites.map((s) => s.id));
@@ -197,9 +356,10 @@ export const useProjectStore = defineStore("project", {
     copySelection() {
       const list = this.selectedSprites;
       if (!list.length) {
-        this.setStatus("没有选中的精灵可复制");
+        this.setStatus(T("status.noCopy"));
         return;
       }
+      for (const s of list) ensureSpriteGeometry(s);
       this.spriteClipboard = list.map((s) => ({
         name: s.name,
         frame: {
@@ -208,12 +368,19 @@ export const useProjectStore = defineStore("project", {
           w: s.frame.w,
           h: s.frame.h,
         },
+        pivot: { x: s.pivot.x, y: s.pivot.y },
+        inset: {
+          top: s.inset.top,
+          right: s.inset.right,
+          bottom: s.inset.bottom,
+          left: s.inset.left,
+        },
       }));
-      this.setStatus(`已复制 ${list.length} 个精灵`);
+      this.setStatus(T("status.copied", { n: list.length }));
     },
     pasteSprites() {
       if (!this.spriteClipboard.length) {
-        this.setStatus("剪贴板为空");
+        this.setStatus(T("status.clipboardEmpty"));
         return;
       }
       const dx = 16;
@@ -231,23 +398,35 @@ export const useProjectStore = defineStore("project", {
             w: row.frame.w,
             h: row.frame.h,
           },
+          pivot: row.pivot
+            ? { x: row.pivot.x, y: row.pivot.y }
+            : defaultPivot(),
+          inset: row.inset
+            ? {
+                top: row.inset.top,
+                right: row.inset.right,
+                bottom: row.inset.bottom,
+                left: row.inset.left,
+              }
+            : defaultInset(),
         };
         this.sprites.push(spr);
         this.clampSpriteFrameToSheet(spr);
       }
       this.setSelection(newIds);
-      this.setStatus(`已粘贴 ${newIds.length} 个精灵`);
+      this.setStatus(T("status.pasted", { n: newIds.length }));
     },
     deleteSelection() {
       const set = new Set(this.selectedIds);
       if (!set.size) {
-        this.setStatus("没有选中的精灵可删除");
+        this.setStatus(T("status.noDelete"));
         return;
       }
       const n = set.size;
+      this.removeSpriteRefsFromAnimations([...set]);
       this.sprites = this.sprites.filter((s) => !set.has(s.id));
       this.clearSelection();
-      this.setStatus(`已删除 ${n} 个精灵`);
+      this.setStatus(T("status.deleted", { n }));
     },
     refreshSheetDimensionsFromUrl() {
       if (!this.sheetImageDataUrl) {
@@ -265,47 +444,22 @@ export const useProjectStore = defineStore("project", {
         img.onerror = () => {
           this.sheetWidth = 0;
           this.sheetHeight = 0;
-          reject(new Error("精灵表图片解码失败"));
+          reject(new Error(T("errors.sheetImageDecodeFailed")));
         };
         img.src = this.sheetImageDataUrl;
       });
     },
-    /** 设置精灵表图片（底图） */
     async setSpriteSheetImage(file) {
       try {
         const url = await readFileAsDataURL(file);
         this.sheetImageDataUrl = url;
         this.sheetFileName = file.name;
         await this.refreshSheetDimensionsFromUrl();
-        if (
-          this.sprites.length === 0 &&
-          this.sheetWidth > 0 &&
-          this.sheetHeight > 0
-        ) {
-          const id = crypto.randomUUID();
-          const nm = baseName(file.name);
-          this.sprites.push({
-            id,
-            name: nm,
-            frame: {
-              x: 0,
-              y: 0,
-              w: this.sheetWidth,
-              h: this.sheetHeight,
-            },
-          });
-          this.setSelection([id]);
-        }
-        this.setStatus(`已设置精灵表图片: ${file.name}`);
+        this.setStatus(T("status.sheetSet", { file: file.name }));
       } catch (e) {
-        this.setStatus(`设置失败: ${e?.message || e}`);
+        this.setStatus(T("status.sheetFailed", { msg: e?.message || e }));
       }
     },
-    /**
-     * 导入图集：图集 JSON + 图集 PNG（与导出相对）
-     * @param {File} jsonFile
-     * @param {File} imageFile
-     */
     async importAtlas(jsonFile, imageFile) {
       try {
         const text = await readFileAsText(jsonFile);
@@ -314,34 +468,57 @@ export const useProjectStore = defineStore("project", {
         this.sheetImageDataUrl = url;
         this.sheetFileName = imageFile.name;
         await this.refreshSheetDimensionsFromUrl();
+        this.animations = [];
+        this.selectedAnimationId = null;
+        this.selectedTimelineFrameIndex = null;
         this.sprites = parsed.sprites.map((r, i) => {
           const spr = {
             id: crypto.randomUUID(),
             name: r.name || `Sprite ${i + 1}`,
             frame: { x: r.x, y: r.y, w: r.w, h: r.h },
+            pivot: r.pivot
+              ? { x: r.pivot.x, y: r.pivot.y }
+              : defaultPivot(),
+            inset: r.inset
+              ? {
+                  top: r.inset.top,
+                  right: r.inset.right,
+                  bottom: r.inset.bottom,
+                  left: r.inset.left,
+                }
+              : defaultInset(),
           };
           this.clampSpriteFrameToSheet(spr);
           return spr;
         });
         this.setSelection(this.sprites.map((s) => s.id));
         this.setStatus(
-          `已导入图集：${parsed.sprites.length} 个切片（${parsed.imageHint}）`
+          T("status.importAtlasDone", {
+            count: parsed.sprites.length,
+            hint: parsed.imageHint,
+          })
         );
       } catch (e) {
-        this.setStatus(`导入图集失败: ${e?.message || e}`);
+        this.setStatus(T("status.importAtlasFailed", { msg: e?.message || e }));
       }
     },
     clampSpriteFrameToSheet(s) {
-      if (!(this.sheetWidth > 0 && this.sheetHeight > 0)) return;
+      if (!(this.sheetWidth > 0 && this.sheetHeight > 0)) {
+        ensureSpriteGeometry(s);
+        return;
+      }
       const f = s.frame;
       f.w = Math.max(1, Math.min(f.w, this.sheetWidth));
       f.h = Math.max(1, Math.min(f.h, this.sheetHeight));
       f.x = Math.max(0, Math.min(f.x, this.sheetWidth - f.w));
       f.y = Math.max(0, Math.min(f.y, this.sheetHeight - f.h));
+      ensureSpriteGeometry(s);
     },
     updateSelected(patch) {
       const s = this.selected;
       if (!s || this.selectedIds.length !== 1) return;
+      if (!s.pivot) s.pivot = defaultPivot();
+      if (!s.inset) s.inset = defaultInset();
       if (patch.name !== undefined) s.name = String(patch.name);
       if (patch.frame) {
         const f = s.frame;
@@ -350,6 +527,20 @@ export const useProjectStore = defineStore("project", {
         if (q.y !== undefined) f.y = Number(q.y) || 0;
         if (q.w !== undefined) f.w = Math.max(1, Number(q.w) || 1);
         if (q.h !== undefined) f.h = Math.max(1, Number(q.h) || 1);
+      }
+      if (patch.pivot && typeof patch.pivot === "object") {
+        const q = patch.pivot;
+        if (q.x !== undefined) s.pivot.x = Number(q.x) || 0;
+        if (q.y !== undefined) s.pivot.y = Number(q.y) || 0;
+      }
+      if (patch.inset && typeof patch.inset === "object") {
+        const q = patch.inset;
+        const ins = s.inset;
+        if (q.top !== undefined) ins.top = Math.max(0, Number(q.top) || 0);
+        if (q.right !== undefined) ins.right = Math.max(0, Number(q.right) || 0);
+        if (q.bottom !== undefined)
+          ins.bottom = Math.max(0, Number(q.bottom) || 0);
+        if (q.left !== undefined) ins.left = Math.max(0, Number(q.left) || 0);
       }
       this.clampSpriteFrameToSheet(s);
     },
@@ -411,11 +602,11 @@ export const useProjectStore = defineStore("project", {
       this.view.scale = Math.max(0.1, sc);
       this.view.offsetX = pad - minX * this.view.scale;
       this.view.offsetY = pad - minY * this.view.scale;
-      this.setStatus("已适应窗口");
+        this.setStatus(T("status.fitView"));
     },
     async exportAtlas() {
       if (this.sprites.length === 0) {
-        this.setStatus("错误：没有可导出的精灵");
+        this.setStatus(T("status.exportNoSprites"));
         return;
       }
       try {
@@ -426,9 +617,9 @@ export const useProjectStore = defineStore("project", {
         const json = buildAtlasJson(placed);
         triggerDownload("atlas.png", blob, "image/png");
         triggerDownload("atlas.json", json, "application/json");
-        this.setStatus("已导出图集（atlas.png / atlas.json）");
+        this.setStatus(T("status.exportDone"));
       } catch (e) {
-        this.setStatus(`导出图集失败: ${e?.message || e}`);
+        this.setStatus(T("status.exportFailed", { msg: e?.message || e }));
       }
     },
     saveProjectFile() {
@@ -436,7 +627,10 @@ export const useProjectStore = defineStore("project", {
         version: 1,
         name: this.name,
         sprites: this.sprites,
+        animations: this.animations,
         selectedIds: this.selectedIds,
+        selectedAnimationId: this.selectedAnimationId,
+        selectedTimelineFrameIndex: this.selectedTimelineFrameIndex,
         view: this.view,
         sheetImageDataUrl: this.sheetImageDataUrl,
         sheetFileName: this.sheetFileName,
@@ -449,22 +643,42 @@ export const useProjectStore = defineStore("project", {
         JSON.stringify(data, null, 2),
         "application/json"
       );
-      this.setStatus("已保存工程文件");
+      this.setStatus(T("status.projectSaved"));
     },
     loadProjectFromText(text) {
       const data = JSON.parse(text);
-      if (!data || !Array.isArray(data.sprites)) throw new Error("无效工程文件");
+      if (!data || !Array.isArray(data.sprites))
+        throw new Error(T("errors.invalidProjectFile"));
       this.name = data.name || "Imported";
-      this.sprites = data.sprites.map((raw, i) => ({
-        id: raw.id || crypto.randomUUID(),
-        name: raw.name || `Sprite ${i + 1}`,
-        frame: {
-          x: Number(raw.frame?.x) || 0,
-          y: Number(raw.frame?.y) || 0,
-          w: Math.max(1, Number(raw.frame?.w) || 32),
-          h: Math.max(1, Number(raw.frame?.h) || 32),
-        },
-      }));
+      this.sprites = data.sprites.map((raw, i) => {
+        const spr = {
+          id: raw.id || crypto.randomUUID(),
+          name: raw.name || T("default.spriteName", { n: i + 1 }),
+          frame: {
+            x: Number(raw.frame?.x) || 0,
+            y: Number(raw.frame?.y) || 0,
+            w: Math.max(1, Number(raw.frame?.w) || 32),
+            h: Math.max(1, Number(raw.frame?.h) || 32),
+          },
+          pivot: raw.pivot
+            ? {
+                x: Number(raw.pivot.x) || 0,
+                y: Number(raw.pivot.y) || 0,
+              }
+            : defaultPivot(),
+          inset: raw.inset
+            ? {
+                top: Math.max(0, Number(raw.inset.top) || 0),
+                right: Math.max(0, Number(raw.inset.right) || 0),
+                bottom: Math.max(0, Number(raw.inset.bottom) || 0),
+                left: Math.max(0, Number(raw.inset.left) || 0),
+              }
+            : defaultInset(),
+        };
+        ensureSpriteGeometry(spr);
+        return spr;
+      });
+      this.animations = normalizeAnimations(data.animations, this.sprites);
       if (Array.isArray(data.selectedIds)) {
         const valid = data.selectedIds.filter((id) =>
           this.sprites.some((s) => s.id === id)
@@ -476,6 +690,29 @@ export const useProjectStore = defineStore("project", {
           : [];
       } else {
         this.selectedIds = this.sprites[0]?.id ? [this.sprites[0].id] : [];
+      }
+      const animId = data.selectedAnimationId;
+      if (
+        animId &&
+        this.animations.some((a) => a.id === animId) &&
+        !this.selectedIds.length
+      ) {
+        this.selectedAnimationId = animId;
+        const cur = this.animations.find((a) => a.id === animId);
+        const tfi = data.selectedTimelineFrameIndex;
+        if (
+          cur &&
+          typeof tfi === "number" &&
+          tfi >= 0 &&
+          tfi < cur.frames.length
+        ) {
+          this.selectedTimelineFrameIndex = tfi;
+        } else {
+          this.selectedTimelineFrameIndex = null;
+        }
+      } else {
+        this.selectedAnimationId = null;
+        this.selectedTimelineFrameIndex = null;
       }
       if (data.view) {
         this.view = {
@@ -499,7 +736,7 @@ export const useProjectStore = defineStore("project", {
         this.sheetHeight = 0;
       }
       this.syncSelectionStatus();
-      this.setStatus(`已打开: ${this.name}`);
+      this.setStatus(T("status.projectOpened", { name: this.name }));
     },
   },
 });

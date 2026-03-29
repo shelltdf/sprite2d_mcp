@@ -1,0 +1,84 @@
+/* 浅色（显式或与系统浅色一致） */
+:root,
+:root[data-theme="light"] {
+  --win-bg: #f3f3f3;
+  --win-border: #d0d0d0;
+  --win-bar: #f9f9f9;
+  --win-hover: #e5f3ff;
+  --win-active: #cce8ff;
+  --win-text: #1a1a1a;
+  --win-canvas-bg: #e8e8ec;
+  --win-panel-head-from: #fafafa;
+  --win-panel-head-to: #f0f0f0;
+  --win-menu-top-from: #fdfdfd;
+  --win-menu-top-to: #f0f0f0;
+  --win-tool-from: #f7f7f7;
+  --win-tool-to: #ececec;
+  --win-input-bg: #fff;
+  --win-ctx-bg: #fff;
+  --win-table-head: #f5f5f5;
+}
+
+/* 深色（显式） */
+:root[data-theme="dark"] {
+  --win-bg: #2d2d30;
+  --win-border: #3f3f46;
+  --win-bar: #252526;
+  --win-hover: #094771;
+  --win-active: #0e639c;
+  --win-text: #e8e8ec;
+  --win-canvas-bg: #1e1e1e;
+  --win-panel-head-from: #333333;
+  --win-panel-head-to: #2a2a2a;
+  --win-menu-top-from: #3c3c3c;
+  --win-menu-top-to: #2d2d2d;
+  --win-tool-from: #383838;
+  --win-tool-to: #2d2d2d;
+  --win-input-bg: #3c3c3c;
+  --win-ctx-bg: #2d2d30;
+  --win-table-head: #383838;
+}
+
+/* 跟随系统：深色偏好 */
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] {
+    --win-bg: #2d2d30;
+    --win-border: #3f3f46;
+    --win-bar: #252526;
+    --win-hover: #094771;
+    --win-active: #0e639c;
+    --win-text: #e8e8ec;
+    --win-canvas-bg: #1e1e1e;
+    --win-panel-head-from: #333333;
+    --win-panel-head-to: #2a2a2a;
+    --win-menu-top-from: #3c3c3c;
+    --win-menu-top-to: #2d2d2d;
+    --win-tool-from: #383838;
+    --win-tool-to: #2d2d2d;
+    --win-input-bg: #3c3c3c;
+    --win-ctx-bg: #2d2d30;
+    --win-table-head: #383838;
+  }
+}
+
+/* 跟随系统：浅色偏好 */
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    --win-bg: #f3f3f3;
+    --win-border: #d0d0d0;
+    --win-bar: #f9f9f9;
+    --win-hover: #e5f3ff;
+    --win-active: #cce8ff;
+    --win-text: #1a1a1a;
+    --win-canvas-bg: #e8e8ec;
+    --win-panel-head-from: #fafafa;
+    --win-panel-head-to: #f0f0f0;
+    --win-menu-top-from: #fdfdfd;
+    --win-menu-top-to: #f0f0f0;
+    --win-tool-from: #f7f7f7;
+    --win-tool-to: #ececec;
+    --win-input-bg: #fff;
+    --win-ctx-bg: #fff;
+    --win-table-head: #f5f5f5;
+  }
+}
