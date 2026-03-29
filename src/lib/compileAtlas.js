@@ -1,4 +1,8 @@
-import { ensureSpriteGeometry, defaultPivot, defaultInset } from "./spriteGeometry.js";
+import {
+  ensureSpriteGeometry,
+  pivotCenterForFrame,
+  defaultInset,
+} from "./spriteGeometry.js";
 
 const PADDING = 2;
 const WRAP_W = 1024;
@@ -162,7 +166,7 @@ export function buildAtlasJson(placed) {
       version: 1,
       image: "atlas.png",
       sprites: placed.map((p) => {
-        const piv = p.pivot || defaultPivot();
+        const piv = p.pivot || pivotCenterForFrame(p.w, p.h);
         const ins = p.inset || defaultInset();
         return {
           name: p.name,

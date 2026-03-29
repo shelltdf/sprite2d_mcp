@@ -9,6 +9,7 @@
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
       @pointercancel="onPointerUp"
+      @pointerenter="onCanvasPointerEnter"
       @pointerleave="onPointerLeaveCanvas"
     />
     <div class="canvas-coords-hud" :title="t('canvas.coordsHudTitle')">
@@ -25,7 +26,7 @@ import { useProjectStore } from "../stores/project.js";
 import { useUiStore } from "../stores/ui.js";
 import { hashColor } from "../lib/compileAtlas.js";
 import { ensureSpriteGeometry } from "../lib/spriteGeometry.js";
-import { SPRITE_MENU_OPEN } from "../menu/events.js";
+import { SPRITE_MENU_OPEN, SPRITE_FOCUS } from "../menu/events.js";
 
 const { t } = useI18n();
 const store = useProjectStore();
@@ -87,7 +88,8 @@ const hudWorldText = computed(() => {
   return `${Math.floor(x)}, ${Math.floor(y)}`;
 });
 
-function updatePointerHudFromEvent(ev) {
+/** 同步左下角坐标 HUD 与 store 内指针世界坐标（用于「添加精灵」落点） */
+function updateCanvasPointerTracking(ev) {
   const canvas = canvasRef.value;
   if (!canvas) return;
   const rect = canvas.getBoundingClientRect();
@@ -95,13 +97,21 @@ function updatePointerHudFromEvent(ev) {
   const cy = ev.clientY - rect.top;
   if (cx < 0 || cy < 0 || cx > rect.width || cy > rect.height) {
     pointerCss.value = null;
+    store.setCanvasPointerHint(false);
     return;
   }
   pointerCss.value = { cx, cy };
+  const w = screenToWorld(cx, cy);
+  store.setCanvasPointerHint(true, w.x, w.y);
+}
+
+function onCanvasPointerEnter(ev) {
+  updateCanvasPointerTracking(ev);
 }
 
 function onPointerLeaveCanvas() {
   pointerCss.value = null;
+  store.setCanvasPointerHint(false);
 }
 
 function isSelected(id) {
@@ -119,6 +129,7 @@ function resize() {
   canvas.height = Math.max(1, Math.floor(h * dpr));
   canvas.style.width = `${w}px`;
   canvas.style.height = `${h}px`;
+  store.setCanvasViewportSize(w, h);
   draw();
 }
 
@@ -210,7 +221,12 @@ function computeResizedFrame(snap, handle, dx, dy) {
     if (handle.includes("n")) y = snap.y + snap.h - 1;
     h = 1;
   }
-  return { x, y, w, h };
+  return {
+    x: Math.round(x),
+    y: Math.round(y),
+    w: Math.max(1, Math.round(w)),
+    h: Math.max(1, Math.round(h)),
+  };
 }
 
 function drawResizeHandles(ctx, scale, f) {
@@ -283,14 +299,7 @@ function updateCanvasCursor(world) {
 }
 
 function clampSpriteToSheet(s) {
-  const sw = sheetWidth.value;
-  const sh = sheetHeight.value;
-  if (!(sw > 0 && sh > 0)) return;
-  const f = s.frame;
-  f.w = Math.min(f.w, sw);
-  f.h = Math.min(f.h, sh);
-  f.x = Math.max(0, Math.min(f.x, sw - f.w));
-  f.y = Math.max(0, Math.min(f.y, sh - f.h));
+  store.clampSpriteFrameToSheet(s);
 }
 
 function draw() {
@@ -507,16 +516,22 @@ function onPointerDown(ev) {
 
     const hit = hitTest(world.x, world.y);
     if (hit) {
+      /** 本次按下前，被点的精灵是否已在选中集中（用于避免「首次点选就拖动」误操作） */
+      const wasHitAlreadySelected = store.isSelected(hit.id);
+
       if (ev.shiftKey) {
         store.addToSelection([hit.id]);
       } else if (ev.ctrlKey || ev.metaKey) {
         store.toggleSelection(hit.id);
       } else {
-        if (!store.isSelected(hit.id)) {
+        if (!wasHitAlreadySelected) {
           store.setSelection([hit.id]);
         }
       }
       if (!store.isSelected(hit.id)) {
+        return;
+      }
+      if (!wasHitAlreadySelected) {
         return;
       }
       groupDragIds = [...store.selectedIds];
@@ -544,7 +559,7 @@ function onPointerDown(ev) {
 function onPointerMove(ev) {
   const canvas = canvasRef.value;
   if (!canvas) return;
-  updatePointerHudFromEvent(ev);
+  updateCanvasPointerTracking(ev);
 
   const rectHud = canvas.getBoundingClientRect();
   const cxHud = ev.clientX - rectHud.left;
@@ -668,6 +683,25 @@ function onFitView() {
   store.fitToRect(wrap.clientWidth, wrap.clientHeight);
 }
 
+/** @param {CustomEvent<{ spriteId: string }>} ev */
+function onFocusSprite(ev) {
+  const id = ev.detail?.spriteId;
+  if (!id) return;
+  const s = sprites.value.find((x) => x.id === id);
+  const wrap = wrapRef.value;
+  if (!s || !wrap) return;
+  const cw = wrap.clientWidth;
+  const ch = wrap.clientHeight;
+  const { scale } = view.value;
+  const cxWorld = s.frame.x + s.frame.w / 2;
+  const cyWorld = s.frame.y + s.frame.h / 2;
+  store.setView({
+    offsetX: cw / 2 - cxWorld * scale,
+    offsetY: ch / 2 - cyWorld * scale,
+  });
+  draw();
+}
+
 function onKeyDown(e) {
   if (e.code === "Space" && !spaceDown.value) {
     spaceDown.value = true;
@@ -687,6 +721,7 @@ onMounted(() => {
   ro = new ResizeObserver(() => resize());
   if (wrapRef.value) ro.observe(wrapRef.value);
   window.addEventListener("sprite2d-fit-view", onFitView);
+  window.addEventListener(SPRITE_FOCUS, onFocusSprite);
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", onKeyUp);
 });
@@ -694,9 +729,21 @@ onMounted(() => {
 onUnmounted(() => {
   ro?.disconnect();
   window.removeEventListener("sprite2d-fit-view", onFitView);
+  window.removeEventListener(SPRITE_FOCUS, onFocusSprite);
   window.removeEventListener("keydown", onKeyDown);
   window.removeEventListener("keyup", onKeyUp);
 });
+
+watch(
+  view,
+  () => {
+    const p = pointerCss.value;
+    if (!p) return;
+    const w = screenToWorld(p.cx, p.cy);
+    store.setCanvasPointerHint(true, w.x, w.y);
+  },
+  { deep: true }
+);
 
 watch(
   () => sheetImageDataUrl.value,

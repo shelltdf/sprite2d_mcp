@@ -4,11 +4,16 @@ import {
   buildAtlasJson,
   triggerDownload,
 } from "../lib/compileAtlas.js";
-import { parseAtlasJson } from "../lib/atlasFormat.js";
+import {
+  buildAtlasMetadataJsonString,
+  buildAtlasMetadataXmlString,
+} from "../lib/exportAtlasMetadata.js";
+import { parseAtlasDocument } from "../lib/atlasImport.js";
 import {
   defaultInset,
-  defaultPivot,
   ensureSpriteGeometry,
+  pivotCenterForFrame,
+  roundSpriteFrameIntegers,
 } from "../lib/spriteGeometry.js";
 import { T } from "../i18n/translate.js";
 
@@ -36,28 +41,52 @@ function readFileAsText(file) {
   });
 }
 
-function newSprite(index, sheetW, sheetH) {
+/**
+ * @param {number} index
+ * @param {number} sheetW
+ * @param {number} sheetH
+ * @param {{ x: number, y: number } | null | undefined} placementWorld 矩形中心的世界坐标；null 则用默认网格/图心
+ */
+function newSprite(index, sheetW, sheetH, placementWorld) {
+  let w;
+  let h;
   if (sheetW > 0 && sheetH > 0) {
-    const w = Math.min(64, sheetW);
-    const h = Math.min(64, sheetH);
-    const x = Math.max(0, Math.floor((sheetW - w) / 2));
-    const y = Math.max(0, Math.floor((sheetH - h) / 2));
-    const s = {
-      id: crypto.randomUUID(),
-      name: T("default.spriteName", { n: index + 1 }),
-      frame: { x, y, w, h },
-      pivot: defaultPivot(),
-      inset: defaultInset(),
-    };
-    ensureSpriteGeometry(s);
-    return s;
+    w = Math.min(64, sheetW);
+    h = Math.min(64, sheetH);
+  } else {
+    const n = 32 + (index % 5) * 16;
+    w = n;
+    h = n;
   }
-  const n = 32 + (index % 5) * 16;
+
+  const hasPlacement =
+    placementWorld &&
+    Number.isFinite(placementWorld.x) &&
+    Number.isFinite(placementWorld.y);
+
+  let x;
+  let y;
+  if (hasPlacement) {
+    x = Math.round(placementWorld.x - w / 2);
+    y = Math.round(placementWorld.y - h / 2);
+  } else if (sheetW > 0 && sheetH > 0) {
+    x = Math.max(0, Math.floor((sheetW - w) / 2));
+    y = Math.max(0, Math.floor((sheetH - h) / 2));
+  } else {
+    x = 20 + (index % 4) * 40;
+    y = 20 + (index % 3) * 36;
+  }
+
+  if (sheetW > 0 && sheetH > 0) {
+    x = Math.max(0, Math.min(x, sheetW - w));
+    y = Math.max(0, Math.min(y, sheetH - h));
+  }
+
   const s = {
     id: crypto.randomUUID(),
     name: T("default.spriteName", { n: index + 1 }),
-    frame: { x: 20 + (index % 4) * 40, y: 20 + (index % 3) * 36, w: n, h: n },
-    pivot: defaultPivot(),
+    frame: { x, y, w, h },
+    pivot: pivotCenterForFrame(w, h),
     inset: defaultInset(),
   };
   ensureSpriteGeometry(s);
@@ -113,8 +142,20 @@ export const useProjectStore = defineStore("project", {
     /** 时间线 / 属性面板当前高亮的动画帧下标 */
     selectedTimelineFrameIndex: /** @type {number | null} */ (null),
     view: { scale: 1, offsetX: 0, offsetY: 0 },
+    /** 指针是否在画布区域内（由 Canvas2D 同步） */
+    canvasPointerOver: false,
+    canvasPointerWorldX: 0,
+    canvasPointerWorldY: 0,
+    /** 画布包装元素 CSS 尺寸，用于「视口中心」放置精灵 */
+    canvasViewportW: 0,
+    canvasViewportH: 0,
     statusMessage: T("status.ready"),
     sheetImageDataUrl: /** @type {string | null} */ (null),
+    /**
+     * 工程/导出用精灵表路径引用（不存像素）。浏览器内选文件时多为文件名；
+     * 若通过文件夹选择器选中则可为 webkitRelativePath。
+     */
+    sheetImagePath: /** @type {string | null} */ (null),
     sheetFileName: null,
     sheetWidth: 0,
     sheetHeight: 0,
@@ -333,20 +374,57 @@ export const useProjectStore = defineStore("project", {
       this.selectedAnimationId = null;
       this.selectedTimelineFrameIndex = null;
       this.view = { scale: 1, offsetX: 0, offsetY: 0 };
+      this.canvasPointerOver = false;
+      this.canvasViewportW = 0;
+      this.canvasViewportH = 0;
       this.sheetImageDataUrl = null;
+      this.sheetImagePath = null;
       this.sheetFileName = null;
       this.sheetWidth = 0;
       this.sheetHeight = 0;
       this.spriteClipboard = [];
       this.setStatus(T("status.newProject"));
     },
+    /** @param {boolean} over @param {number} [worldX] @param {number} [worldY] */
+    setCanvasPointerHint(over, worldX = 0, worldY = 0) {
+      this.canvasPointerOver = !!over;
+      if (this.canvasPointerOver) {
+        this.canvasPointerWorldX = worldX;
+        this.canvasPointerWorldY = worldY;
+      }
+    },
+    /** @param {number} w @param {number} h */
+    setCanvasViewportSize(w, h) {
+      this.canvasViewportW = Math.max(0, w);
+      this.canvasViewportH = Math.max(0, h);
+    },
     addSprite() {
+      /** @type {{ x: number, y: number } | null} */
+      let placement = null;
+      if (
+        this.canvasPointerOver &&
+        Number.isFinite(this.canvasPointerWorldX) &&
+        Number.isFinite(this.canvasPointerWorldY)
+      ) {
+        placement = {
+          x: this.canvasPointerWorldX,
+          y: this.canvasPointerWorldY,
+        };
+      } else if (this.canvasViewportW > 0 && this.canvasViewportH > 0) {
+        const { scale, offsetX, offsetY } = this.view;
+        placement = {
+          x: (this.canvasViewportW / 2 - offsetX) / scale,
+          y: (this.canvasViewportH / 2 - offsetY) / scale,
+        };
+      }
       const s = newSprite(
         this.sprites.length,
         this.sheetWidth,
-        this.sheetHeight
+        this.sheetHeight,
+        placement
       );
       this.sprites.push(s);
+      this.clampSpriteFrameToSheet(s);
       this.setSelection([s.id]);
       this.setStatus(T("status.addedSprite", { name: s.name }));
     },
@@ -398,9 +476,9 @@ export const useProjectStore = defineStore("project", {
             w: row.frame.w,
             h: row.frame.h,
           },
-          pivot: row.pivot
-            ? { x: row.pivot.x, y: row.pivot.y }
-            : defaultPivot(),
+          ...(row.pivot
+            ? { pivot: { x: row.pivot.x, y: row.pivot.y } }
+            : {}),
           inset: row.inset
             ? {
                 top: row.inset.top,
@@ -454,6 +532,11 @@ export const useProjectStore = defineStore("project", {
         const url = await readFileAsDataURL(file);
         this.sheetImageDataUrl = url;
         this.sheetFileName = file.name;
+        this.sheetImagePath =
+          typeof file.webkitRelativePath === "string" &&
+          file.webkitRelativePath.length > 0
+            ? file.webkitRelativePath
+            : file.name;
         await this.refreshSheetDimensionsFromUrl();
         this.setStatus(T("status.sheetSet", { file: file.name }));
       } catch (e) {
@@ -463,10 +546,15 @@ export const useProjectStore = defineStore("project", {
     async importAtlas(jsonFile, imageFile) {
       try {
         const text = await readFileAsText(jsonFile);
-        const parsed = parseAtlasJson(text);
+        const parsed = parseAtlasDocument(text, jsonFile.name || "");
         const url = await readFileAsDataURL(imageFile);
         this.sheetImageDataUrl = url;
         this.sheetFileName = imageFile.name;
+        this.sheetImagePath =
+          typeof imageFile.webkitRelativePath === "string" &&
+          imageFile.webkitRelativePath.length > 0
+            ? imageFile.webkitRelativePath
+            : imageFile.name;
         await this.refreshSheetDimensionsFromUrl();
         this.animations = [];
         this.selectedAnimationId = null;
@@ -476,9 +564,9 @@ export const useProjectStore = defineStore("project", {
             id: crypto.randomUUID(),
             name: r.name || `Sprite ${i + 1}`,
             frame: { x: r.x, y: r.y, w: r.w, h: r.h },
-            pivot: r.pivot
-              ? { x: r.pivot.x, y: r.pivot.y }
-              : defaultPivot(),
+            ...(r.pivot
+              ? { pivot: { x: r.pivot.x, y: r.pivot.y } }
+              : {}),
             inset: r.inset
               ? {
                   top: r.inset.top,
@@ -492,17 +580,29 @@ export const useProjectStore = defineStore("project", {
           return spr;
         });
         this.setSelection(this.sprites.map((s) => s.id));
+        const fmt = parsed.formatHint || "";
+        const fmtKey = fmt ? `importAtlasFormat.${fmt}` : "";
+        const fmtLabel = fmtKey ? T(fmtKey) : "";
+        const hintLine =
+          fmtKey && fmtLabel !== fmtKey
+            ? `${parsed.imageHint} · ${fmtLabel}`
+            : fmt
+              ? `${parsed.imageHint} · ${fmt}`
+              : String(parsed.imageHint);
         this.setStatus(
           T("status.importAtlasDone", {
             count: parsed.sprites.length,
-            hint: parsed.imageHint,
+            hint: hintLine,
           })
         );
       } catch (e) {
-        this.setStatus(T("status.importAtlasFailed", { msg: e?.message || e }));
+        const key = /** @type {{ atlasKey?: string }} */ (e)?.atlasKey;
+        const msg = key ? T(key) : String(e?.message || e);
+        this.setStatus(T("status.importAtlasFailed", { msg }));
       }
     },
     clampSpriteFrameToSheet(s) {
+      roundSpriteFrameIntegers(s.frame);
       if (!(this.sheetWidth > 0 && this.sheetHeight > 0)) {
         ensureSpriteGeometry(s);
         return;
@@ -517,21 +617,23 @@ export const useProjectStore = defineStore("project", {
     updateSelected(patch) {
       const s = this.selected;
       if (!s || this.selectedIds.length !== 1) return;
-      if (!s.pivot) s.pivot = defaultPivot();
+      if (!s.pivot || typeof s.pivot !== "object") {
+        s.pivot = pivotCenterForFrame(s.frame.w, s.frame.h);
+      }
       if (!s.inset) s.inset = defaultInset();
       if (patch.name !== undefined) s.name = String(patch.name);
       if (patch.frame) {
         const f = s.frame;
         const q = patch.frame;
-        if (q.x !== undefined) f.x = Number(q.x) || 0;
-        if (q.y !== undefined) f.y = Number(q.y) || 0;
-        if (q.w !== undefined) f.w = Math.max(1, Number(q.w) || 1);
-        if (q.h !== undefined) f.h = Math.max(1, Number(q.h) || 1);
+        if (q.x !== undefined) f.x = Math.round(Number(q.x) || 0);
+        if (q.y !== undefined) f.y = Math.round(Number(q.y) || 0);
+        if (q.w !== undefined) f.w = Math.max(1, Math.round(Number(q.w) || 1));
+        if (q.h !== undefined) f.h = Math.max(1, Math.round(Number(q.h) || 1));
       }
       if (patch.pivot && typeof patch.pivot === "object") {
         const q = patch.pivot;
-        if (q.x !== undefined) s.pivot.x = Number(q.x) || 0;
-        if (q.y !== undefined) s.pivot.y = Number(q.y) || 0;
+        if (q.x !== undefined) s.pivot.x = Math.round(Number(q.x) || 0);
+        if (q.y !== undefined) s.pivot.y = Math.round(Number(q.y) || 0);
       }
       if (patch.inset && typeof patch.inset === "object") {
         const q = patch.inset;
@@ -622,9 +724,52 @@ export const useProjectStore = defineStore("project", {
         this.setStatus(T("status.exportFailed", { msg: e?.message || e }));
       }
     },
-    saveProjectFile() {
-      const data = {
-        version: 1,
+    /** 第三方图集描述：JSON，仅路径与元数据，不含像素 */
+    exportAtlasMetadataJson() {
+      try {
+        const json = buildAtlasMetadataJsonString({
+          name: this.name,
+          sheetImagePath: this.sheetImagePath,
+          sheetFileName: this.sheetFileName,
+          sheetWidth: this.sheetWidth,
+          sheetHeight: this.sheetHeight,
+          sprites: this.sprites,
+          animations: this.animations,
+        });
+        const base = (this.name || "atlas").replace(/[^\w\-]+/g, "_");
+        triggerDownload(`${base}-metadata.json`, json, "application/json");
+        this.setStatus(T("status.exportMetadataDone"));
+      } catch (e) {
+        this.setStatus(
+          T("status.exportMetadataFailed", { msg: e?.message || e })
+        );
+      }
+    },
+    /** 第三方图集描述：XML，仅路径与元数据，不含像素 */
+    exportAtlasMetadataXml() {
+      try {
+        const xml = buildAtlasMetadataXmlString({
+          name: this.name,
+          sheetImagePath: this.sheetImagePath,
+          sheetFileName: this.sheetFileName,
+          sheetWidth: this.sheetWidth,
+          sheetHeight: this.sheetHeight,
+          sprites: this.sprites,
+          animations: this.animations,
+        });
+        const base = (this.name || "atlas").replace(/[^\w\-]+/g, "_");
+        triggerDownload(`${base}-metadata.xml`, xml, "application/xml");
+        this.setStatus(T("status.exportMetadataDone"));
+      } catch (e) {
+        this.setStatus(
+          T("status.exportMetadataFailed", { msg: e?.message || e })
+        );
+      }
+    },
+    /** @returns {object} 工程序列化对象 */
+    buildProjectFilePayload() {
+      return {
+        version: 2,
         name: this.name,
         sprites: this.sprites,
         animations: this.animations,
@@ -632,18 +777,43 @@ export const useProjectStore = defineStore("project", {
         selectedAnimationId: this.selectedAnimationId,
         selectedTimelineFrameIndex: this.selectedTimelineFrameIndex,
         view: this.view,
-        sheetImageDataUrl: this.sheetImageDataUrl,
+        sheetImagePath: this.sheetImagePath ?? this.sheetFileName,
         sheetFileName: this.sheetFileName,
         sheetWidth: this.sheetWidth,
         sheetHeight: this.sheetHeight,
       };
-      const name = (this.name || "project").replace(/[^\w\-]+/g, "_");
+    },
+    saveProjectFile() {
+      const data = this.buildProjectFilePayload();
+      const name = (this.name || "project").replace(/[^\w\-]+/g, "_") || "project";
       triggerDownload(
         `${name}.spriteproj.json`,
         JSON.stringify(data, null, 2),
         "application/json"
       );
       this.setStatus(T("status.projectSaved"));
+    },
+    /** 另存为：提示输入文件名（工程 `name` 同步为输入内容；下载文件名经 ASCII 安全化） */
+    saveProjectFileAs() {
+      const defaultSuggest = String(this.name || "Untitled").trim() || "Untitled";
+      const raw = window.prompt(T("menu.saveAsPrompt"), defaultSuggest);
+      if (raw === null) return;
+      const trimmed = String(raw).trim();
+      if (!trimmed) {
+        this.setStatus(T("status.saveAsEmpty"));
+        return;
+      }
+      const fileStem =
+        trimmed.replace(/[^\w\-]+/g, "_").replace(/^_+|_+$/g, "") || "project";
+      this.name = trimmed;
+      const data = this.buildProjectFilePayload();
+      data.name = this.name;
+      triggerDownload(
+        `${fileStem}.spriteproj.json`,
+        JSON.stringify(data, null, 2),
+        "application/json"
+      );
+      this.setStatus(T("status.projectSavedAs", { file: `${fileStem}.spriteproj.json` }));
     },
     loadProjectFromText(text) {
       const data = JSON.parse(text);
@@ -655,17 +825,19 @@ export const useProjectStore = defineStore("project", {
           id: raw.id || crypto.randomUUID(),
           name: raw.name || T("default.spriteName", { n: i + 1 }),
           frame: {
-            x: Number(raw.frame?.x) || 0,
-            y: Number(raw.frame?.y) || 0,
-            w: Math.max(1, Number(raw.frame?.w) || 32),
-            h: Math.max(1, Number(raw.frame?.h) || 32),
+            x: Math.round(Number(raw.frame?.x) || 0),
+            y: Math.round(Number(raw.frame?.y) || 0),
+            w: Math.max(1, Math.round(Number(raw.frame?.w) || 32)),
+            h: Math.max(1, Math.round(Number(raw.frame?.h) || 32)),
           },
-          pivot: raw.pivot
+          ...(raw.pivot && typeof raw.pivot === "object"
             ? {
-                x: Number(raw.pivot.x) || 0,
-                y: Number(raw.pivot.y) || 0,
+                pivot: {
+                  x: Math.round(Number(raw.pivot.x) || 0),
+                  y: Math.round(Number(raw.pivot.y) || 0),
+                },
               }
-            : defaultPivot(),
+            : {}),
           inset: raw.inset
             ? {
                 top: Math.max(0, Number(raw.inset.top) || 0),
@@ -721,9 +893,16 @@ export const useProjectStore = defineStore("project", {
           offsetY: Number(data.view.offsetY) || 0,
         };
       }
-      if (data.sheetImageDataUrl) {
+      const fileVer = Number(data.version) || 1;
+      const embedded =
+        typeof data.sheetImageDataUrl === "string" &&
+        data.sheetImageDataUrl.startsWith("data:");
+
+      if (embedded && fileVer < 2) {
         this.sheetImageDataUrl = data.sheetImageDataUrl;
         this.sheetFileName = data.sheetFileName || null;
+        this.sheetImagePath =
+          data.sheetImagePath ?? data.sheetFileName ?? null;
         this.sheetWidth = Number(data.sheetWidth) || 0;
         this.sheetHeight = Number(data.sheetHeight) || 0;
         if (!this.sheetWidth || !this.sheetHeight) {
@@ -731,12 +910,25 @@ export const useProjectStore = defineStore("project", {
         }
       } else {
         this.sheetImageDataUrl = null;
-        this.sheetFileName = null;
-        this.sheetWidth = 0;
-        this.sheetHeight = 0;
+        this.sheetImagePath =
+          data.sheetImagePath ?? data.sheetFileName ?? null;
+        this.sheetFileName = data.sheetFileName || null;
+        if (!this.sheetFileName && typeof this.sheetImagePath === "string") {
+          const segs = this.sheetImagePath.replace(/\\/g, "/").split("/");
+          this.sheetFileName = segs[segs.length - 1] || null;
+        }
+        this.sheetWidth = Number(data.sheetWidth) || 0;
+        this.sheetHeight = Number(data.sheetHeight) || 0;
       }
       this.syncSelectionStatus();
-      this.setStatus(T("status.projectOpened", { name: this.name }));
+      const pathHint = this.sheetImagePath || this.sheetFileName;
+      if (!this.sheetImageDataUrl && pathHint) {
+        this.setStatus(
+          T("status.projectOpenedNeedSheet", { name: this.name, path: pathHint })
+        );
+      } else {
+        this.setStatus(T("status.projectOpened", { name: this.name }));
+      }
     },
   },
 });

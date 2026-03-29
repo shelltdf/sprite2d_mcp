@@ -39,9 +39,9 @@ textarea {
 
 .win-main {
   display: grid;
-  grid-template-columns: minmax(220px, 288px) minmax(0, 1fr) minmax(
-    200px,
-    min(40vw, 480px)
+  grid-template-columns: minmax(196px, 252px) minmax(0, 1fr) minmax(
+    176px,
+    min(34vw, 400px)
   );
   min-height: 0;
   border-top: 1px solid var(--win-border);

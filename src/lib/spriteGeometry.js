@@ -8,8 +8,27 @@
  * @typedef {{ top: number, right: number, bottom: number, left: number }} Inset
  */
 
+/** @deprecated 新建精灵请用 pivotCenterForFrame(w,h)；保留供旧 JSON 显式 {0,0} 等场景 */
 export function defaultPivot() {
   return { x: 0, y: 0 };
+}
+
+/** 锚点默认在矩形中心（像素整数，偏左/上取整） */
+export function pivotCenterForFrame(w, h) {
+  const ww = Math.max(1, Math.round(Number(w) || 1));
+  const hh = Math.max(1, Math.round(Number(h) || 1));
+  return { x: Math.floor(ww / 2), y: Math.floor(hh / 2) };
+}
+
+/**
+ * 将 frame 四字段取整；w/h 至少为 1。
+ * @param {{ x: number, y: number, w: number, h: number }} f
+ */
+export function roundSpriteFrameIntegers(f) {
+  f.x = Math.round(Number(f.x) || 0);
+  f.y = Math.round(Number(f.y) || 0);
+  f.w = Math.max(1, Math.round(Number(f.w) || 1));
+  f.h = Math.max(1, Math.round(Number(f.h) || 1));
 }
 
 export function defaultInset() {
@@ -25,15 +44,15 @@ export function ensureSpriteGeometry(s) {
   const h = Math.max(1, Number(s.frame?.h) || 1);
 
   if (!s.pivot || typeof s.pivot !== "object") {
-    s.pivot = defaultPivot();
+    s.pivot = pivotCenterForFrame(w, h);
   } else {
     s.pivot = {
       x: Number(s.pivot.x) || 0,
       y: Number(s.pivot.y) || 0,
     };
   }
-  s.pivot.x = Math.max(0, Math.min(s.pivot.x, w));
-  s.pivot.y = Math.max(0, Math.min(s.pivot.y, h));
+  s.pivot.x = Math.max(0, Math.min(Math.round(s.pivot.x), w));
+  s.pivot.y = Math.max(0, Math.min(Math.round(s.pivot.y), h));
 
   if (!s.inset || typeof s.inset !== "object") {
     s.inset = defaultInset();

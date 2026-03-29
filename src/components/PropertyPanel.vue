@@ -77,6 +77,33 @@
       <p v-if="!anim.frames.length" class="empty-hint">
         {{ t("props.noFrames") }}
       </p>
+      <div v-else class="anim-preview-box">
+        <p class="section-label section-tight">{{ t("props.animPreview") }}</p>
+        <div class="anim-preview-row">
+          <button type="button" class="mini-btn" @click="toggleAnimPreviewPlay">
+            {{
+              animPreviewPlaying
+                ? t("props.animPreviewStop")
+                : t("props.animPreviewPlay")
+            }}
+          </button>
+          <span class="anim-preview-idx">{{ animPreviewPlayIndex + 1 }} / {{ anim.frames.length }}</span>
+        </div>
+        <div class="anim-preview-clip" :style="animPreviewClipStyle">
+          <img
+            v-if="store.sheetImageDataUrl && store.sheetWidth > 0 && animPreviewFrame"
+            :src="store.sheetImageDataUrl"
+            alt=""
+            class="anim-preview-sheet-img"
+            draggable="false"
+            :style="animPreviewImgStyle"
+          >
+          <div
+            v-else
+            class="anim-preview-fallback"
+          />
+        </div>
+      </div>
     </div>
 
     <div v-else-if="store.selectedCount === 1 && sel" class="prop-body">
@@ -138,7 +165,13 @@
         </label>
       </div>
       <div class="preview-box">
-        <div class="preview-label">{{ t("props.preview") }}</div>
+        <div class="preview-head">
+          <div class="preview-label">{{ t("props.preview") }}</div>
+          <label class="preview-guides-toggle">
+            <input v-model="showPreviewGuides" type="checkbox">
+            <span>{{ t("props.previewGuides") }}</span>
+          </label>
+        </div>
         <div class="preview-clip" :style="previewClipBoxStyle">
           <img
             v-if="store.sheetImageDataUrl && store.sheetWidth > 0 && store.sheetHeight > 0"
@@ -153,11 +186,12 @@
             class="preview-fallback-fill"
           />
           <div
-            v-if="innerPreviewStyle"
+            v-if="showPreviewGuides && innerPreviewStyle"
             class="preview-inset-outline"
             :style="innerPreviewStyle"
           />
           <div
+            v-if="showPreviewGuides"
             class="preview-pivot-dot"
             :style="pivotPreviewStyle"
           />
@@ -178,7 +212,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useProjectStore } from "../stores/project.js";
 
@@ -199,8 +233,122 @@ const insetR = ref(0);
 const insetB = ref(0);
 const insetL = ref(0);
 
+/** 预览区内边界虚线框与锚点圆点 */
+const showPreviewGuides = ref(true);
+
 const animName = ref("");
 const addSpriteId = ref("");
+
+/** 属性面板内动画帧预览（与时间线播放独立） */
+const animPreviewPlayIndex = ref(0);
+const animPreviewPlaying = ref(false);
+let animPreviewTimer = null;
+
+const animPreviewFrame = computed(() => {
+  const a = anim.value;
+  if (!a?.frames?.length) return null;
+  const i = Math.min(animPreviewPlayIndex.value, a.frames.length - 1);
+  const id = a.frames[i]?.spriteId;
+  if (!id) return null;
+  const spr = store.sprites.find((s) => s.id === id);
+  return spr?.frame ?? null;
+});
+
+const animPreviewMaxPx = 100;
+const animPreviewScale = computed(() => {
+  const f = animPreviewFrame.value;
+  if (!f || f.w < 1 || f.h < 1) return 1;
+  return Math.min(animPreviewMaxPx / f.w, animPreviewMaxPx / f.h, 16);
+});
+
+const animPreviewClipStyle = computed(() => {
+  const f = animPreviewFrame.value;
+  const s = animPreviewScale.value;
+  if (!f) {
+    return { width: "64px", height: "64px" };
+  }
+  return {
+    width: `${Math.max(4, f.w * s)}px`,
+    height: `${Math.max(4, f.h * s)}px`,
+  };
+});
+
+const animPreviewImgStyle = computed(() => {
+  const f = animPreviewFrame.value;
+  const s = animPreviewScale.value;
+  const sw = store.sheetWidth;
+  const sh = store.sheetHeight;
+  if (!f || !(sw > 0 && sh > 0)) return { display: "none" };
+  const up = s > 1 + 1e-6;
+  return {
+    width: `${sw * s}px`,
+    height: `${sh * s}px`,
+    marginLeft: `${-f.x * s}px`,
+    marginTop: `${-f.y * s}px`,
+    display: "block",
+    imageRendering: up ? "pixelated" : "auto",
+  };
+});
+
+function stopAnimPreviewPlay() {
+  animPreviewPlaying.value = false;
+  if (animPreviewTimer != null) {
+    clearTimeout(animPreviewTimer);
+    animPreviewTimer = null;
+  }
+}
+
+function scheduleAnimPreviewNext() {
+  const a = anim.value;
+  if (!a?.frames.length) {
+    stopAnimPreviewPlay();
+    return;
+  }
+  const i = animPreviewPlayIndex.value;
+  const fr = a.frames[i];
+  if (!fr) {
+    animPreviewPlayIndex.value = 0;
+    scheduleAnimPreviewNext();
+    return;
+  }
+  animPreviewTimer = setTimeout(() => {
+    animPreviewTimer = null;
+    if (!animPreviewPlaying.value) return;
+    const len = a.frames.length;
+    animPreviewPlayIndex.value = (animPreviewPlayIndex.value + 1) % len;
+    scheduleAnimPreviewNext();
+  }, Math.max(1, fr.durationMs));
+}
+
+function toggleAnimPreviewPlay() {
+  const a = anim.value;
+  if (!a?.frames.length) return;
+  if (animPreviewPlaying.value) {
+    stopAnimPreviewPlay();
+    return;
+  }
+  animPreviewPlaying.value = true;
+  if (animPreviewPlayIndex.value >= a.frames.length) {
+    animPreviewPlayIndex.value = 0;
+  }
+  scheduleAnimPreviewNext();
+}
+
+watch(anim, () => {
+  stopAnimPreviewPlay();
+  animPreviewPlayIndex.value = 0;
+});
+
+watch(
+  () => anim.value?.frames?.length ?? 0,
+  (n) => {
+    if (animPreviewPlayIndex.value >= n) {
+      animPreviewPlayIndex.value = Math.max(0, n - 1);
+    }
+  }
+);
+
+onUnmounted(() => stopAnimPreviewPlay());
 
 function syncSpriteFields(s) {
   if (!s) {
@@ -297,12 +445,12 @@ function onFrameDur(idx, ev) {
   store.setAnimFrameDuration(idx, Number(ev.target.value));
 }
 
-/** 与输入框同步的裁剪矩形（未提交 store 时也能刷新预览） */
+/** 与输入框同步的裁剪矩形（未提交 store 时也能刷新预览；展示为整数） */
 const previewFrame = computed(() => ({
-  x: fx.value,
-  y: fy.value,
-  w: Math.max(1, fw.value),
-  h: Math.max(1, fh.value),
+  x: Math.round(Number(fx.value) || 0),
+  y: Math.round(Number(fy.value) || 0),
+  w: Math.max(1, Math.round(Number(fw.value) || 1)),
+  h: Math.max(1, Math.round(Number(fh.value) || 1)),
 }));
 
 const maxPreviewPx = 120;
@@ -365,10 +513,12 @@ const innerPreviewStyle = computed(() => {
 
 const pivotPreviewStyle = computed(() => {
   const s = previewScale.value;
+  const px = Math.round(Number(pivotX.value) || 0);
+  const py = Math.round(Number(pivotY.value) || 0);
   return {
     position: "absolute",
-    left: `${pivotX.value * s}px`,
-    top: `${pivotY.value * s}px`,
+    left: `${px * s}px`,
+    top: `${py * s}px`,
     width: "8px",
     height: "8px",
     marginLeft: "-4px",
@@ -477,11 +627,38 @@ const pivotPreviewStyle = computed(() => {
   overflow: hidden;
 }
 
+.preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  min-width: 0;
+}
+
 .preview-label {
   font-size: 11px;
   font-weight: 600;
-  margin-bottom: 8px;
+  margin: 0;
   color: #444;
+  min-width: 0;
+}
+
+.preview-guides-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #555;
+  cursor: default;
+  user-select: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.preview-guides-toggle input {
+  margin: 0;
 }
 
 .preview-clip {
@@ -515,6 +692,58 @@ const pivotPreviewStyle = computed(() => {
   text-align: center;
   font-size: 11px;
   color: #666;
+}
+
+.anim-preview-box {
+  border: 1px solid var(--win-border, #d0d0d0);
+  background: #fff;
+  padding: 10px;
+  border-radius: 2px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.anim-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.anim-preview-idx {
+  font-size: 11px;
+  color: #666;
+}
+
+.anim-preview-clip {
+  position: relative;
+  overflow: hidden;
+  margin: 0 auto;
+  box-sizing: border-box;
+  max-width: 100%;
+  border: 1px solid var(--win-border, #ababab);
+  background: repeating-conic-gradient(#e8e8e8 0% 25%, #fff 0% 50%) 50% / 8px
+    8px;
+}
+
+.anim-preview-sheet-img {
+  vertical-align: top;
+  user-select: none;
+  pointer-events: none;
+  position: relative;
+  z-index: 1;
+}
+
+.anim-preview-fallback {
+  min-height: 48px;
+  min-width: 48px;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #6b9bd1 0%, #4a7ab0 100%);
 }
 
 .prop-empty {

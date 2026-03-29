@@ -49,7 +49,7 @@
     <input
       ref="atlasJsonRef"
       type="file"
-      accept=".json,application/json"
+      accept=".json,.xml,application/json,text/xml,application/xml"
       class="hidden-file"
       @change="onAtlasJson"
     >
@@ -189,6 +189,11 @@ const menus = computed(() => {
           action: () => store.saveProjectFile(),
         },
         {
+          key: "saveAs",
+          label: t("menu.fileSaveAs"),
+          action: () => store.saveProjectFileAs(),
+        },
+        {
           key: "importAtlas",
           label: t("menu.importAtlas"),
           action: openAtlasImport,
@@ -198,6 +203,16 @@ const menus = computed(() => {
           label: t("menu.exportAtlas"),
           action: () => store.exportAtlas(),
           disabled: () => store.sprites.length === 0,
+        },
+        {
+          key: "exportMetaJson",
+          label: t("menu.exportMetadataJson"),
+          action: () => store.exportAtlasMetadataJson(),
+        },
+        {
+          key: "exportMetaXml",
+          label: t("menu.exportMetadataXml"),
+          action: () => store.exportAtlasMetadataXml(),
         },
       ],
     },

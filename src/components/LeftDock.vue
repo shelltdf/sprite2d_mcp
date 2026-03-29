@@ -25,7 +25,10 @@
             alt=""
           >
           <div class="sheet-meta">
-            <div class="sheet-name" :title="store.sheetFileName || ''">
+            <div
+              class="sheet-name"
+              :title="store.sheetImagePath || store.sheetFileName || ''"
+            >
               {{ store.sheetFileName || t("dock.loaded") }}
             </div>
             <div class="sheet-dim">
@@ -70,6 +73,7 @@
                 :key="s.id"
                 :class="{ active: store.isSelected(s.id) }"
                 @click="onSpriteRow(s, $event)"
+                @dblclick.stop="onSpriteRowDblClick(s)"
                 @contextmenu.prevent="onSpriteRowContext(s, $event)"
               >
                 <td class="name-cell">{{ s.name }}</td>
@@ -131,7 +135,7 @@
 import { reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useProjectStore } from "../stores/project.js";
-import { SPRITE_MENU_OPEN } from "../menu/events.js";
+import { SPRITE_MENU_OPEN, SPRITE_FOCUS } from "../menu/events.js";
 
 const { t } = useI18n();
 const store = useProjectStore();
@@ -155,6 +159,13 @@ function onSpriteRow(s, e) {
   } else {
     store.setSelection([s.id]);
   }
+}
+
+function onSpriteRowDblClick(s) {
+  store.setSelection([s.id]);
+  window.dispatchEvent(
+    new CustomEvent(SPRITE_FOCUS, { detail: { spriteId: s.id } })
+  );
 }
 
 function onSpriteRowContext(s, ev) {
@@ -331,9 +342,8 @@ async function onSheetFile(ev) {
 
 .list-scroll {
   flex: 1;
+  min-height: 0;
   overflow: auto;
-  min-height: 80px;
-  max-height: 240px;
 }
 
 .sprite-table {

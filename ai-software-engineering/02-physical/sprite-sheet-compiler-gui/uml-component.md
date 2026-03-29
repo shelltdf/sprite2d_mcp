@@ -5,18 +5,28 @@ flowchart TB
   subgraph GUI["Vue SPA"]
     MB[MenuBar]
     TB[ToolBar]
-    SL[SpriteListPanel]
+    LD[LeftDock]
+    ATL[AnimationTimelineDock]
     CV[Canvas2D]
     PP[PropertyPanel]
+    SCM[SpriteContextMenu]
     SB[StatusBar]
-    ST[Pinia store]
+    PST[Pinia project]
+    UIST[Pinia ui]
     CP[compileAtlas]
+    ATLIMP[atlasImport]
+    ATLMETA[exportAtlasMetadata]
   end
-  MB --> ST
-  TB --> ST
-  SL --> ST
-  CV --> ST
-  PP --> ST
-  ST --> SB
-  ST --> CP
+  MB --> PST
+  TB --> PST
+  LD --> PST
+  ATL --> PST
+  CV --> PST
+  CV --> UIST
+  PP --> PST
+  SCM --> PST
+  PST --> SB
+  PST --> CP
+  PST --> ATLIMP
+  PST --> ATLMETA
 ```
