@@ -16,7 +16,7 @@ classDiagram
   class ProjectState {
     +string name
     +Sprite[] sprites
-    +string selectedId
+    +string[] selectedIds
     +View view
     +string statusMessage
   }

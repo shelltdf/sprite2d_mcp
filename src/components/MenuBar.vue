@@ -39,6 +39,27 @@
       class="hidden-file"
       @change="onFile"
     >
+    <input
+      ref="sheetFileRef"
+      type="file"
+      accept="image/png,image/jpeg,image/webp,image/gif,image/bmp,.png,.jpg,.jpeg,.webp,.gif,.bmp"
+      class="hidden-file"
+      @change="onSheetFile"
+    >
+    <input
+      ref="atlasJsonRef"
+      type="file"
+      accept=".json,application/json"
+      class="hidden-file"
+      @change="onAtlasJson"
+    >
+    <input
+      ref="atlasImageRef"
+      type="file"
+      accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
+      class="hidden-file"
+      @change="onAtlasImage"
+    >
   </header>
 </template>
 
@@ -49,6 +70,12 @@ import { useProjectStore } from "../stores/project.js";
 const store = useProjectStore();
 const openId = ref(null);
 const fileRef = ref(null);
+const sheetFileRef = ref(null);
+const atlasJsonRef = ref(null);
+const atlasImageRef = ref(null);
+
+/** @type {import('vue').Ref<File | null>} */
+const pendingAtlasJsonFile = ref(null);
 
 function closeAll() {
   openId.value = null;
@@ -67,6 +94,15 @@ function openFilePicker() {
   fileRef.value?.click();
 }
 
+function openSheetPicker() {
+  sheetFileRef.value?.click();
+}
+
+function openAtlasImport() {
+  pendingAtlasJsonFile.value = null;
+  atlasJsonRef.value?.click();
+}
+
 async function onFile(ev) {
   const f = ev.target.files?.[0];
   ev.target.value = "";
@@ -79,6 +115,35 @@ async function onFile(ev) {
   }
 }
 
+async function onSheetFile(ev) {
+  const f = ev.target.files?.[0];
+  ev.target.value = "";
+  if (!f) return;
+  await store.setSpriteSheetImage(f);
+}
+
+async function onAtlasJson(ev) {
+  const f = ev.target.files?.[0];
+  ev.target.value = "";
+  if (!f) return;
+  pendingAtlasJsonFile.value = f;
+  atlasImageRef.value?.click();
+}
+
+async function onAtlasImage(ev) {
+  const f = ev.target.files?.[0];
+  ev.target.value = "";
+  const jsonFile = pendingAtlasJsonFile.value;
+  pendingAtlasJsonFile.value = null;
+  if (!f || !jsonFile) {
+    if (!f && jsonFile) {
+      store.setStatus("已取消：请选择图集 PNG 图片");
+    }
+    return;
+  }
+  await store.importAtlas(jsonFile, f);
+}
+
 const menus = [
   {
     id: "file",
@@ -86,7 +151,17 @@ const menus = [
     items: [
       { key: "new", label: "新建工程", action: () => store.newProject() },
       { key: "open", label: "打开工程…", action: openFilePicker },
+      {
+        key: "setSheet",
+        label: "设置精灵表图片…",
+        action: openSheetPicker,
+      },
       { key: "save", label: "保存工程…", action: () => store.saveProjectFile() },
+      {
+        key: "importAtlas",
+        label: "导入图集…",
+        action: openAtlasImport,
+      },
       {
         key: "export",
         label: "导出图集…",
@@ -96,13 +171,33 @@ const menus = [
     ],
   },
   {
-    id: "edit",
-    label: "编辑(E)",
+    id: "sprite",
+    label: "精灵(S)",
     items: [
+      { key: "add", label: "添加精灵", action: () => store.addSprite() },
       {
-        key: "add",
-        label: "添加精灵",
-        action: () => store.addSprite(),
+        key: "selectAll",
+        label: "全选",
+        action: () => store.selectAllSprites(),
+        disabled: () => store.sprites.length === 0,
+      },
+      {
+        key: "copy",
+        label: "复制",
+        action: () => store.copySelection(),
+        disabled: () => store.selectedIds.length === 0,
+      },
+      {
+        key: "paste",
+        label: "粘贴",
+        action: () => store.pasteSprites(),
+        disabled: () => store.spriteClipboard.length === 0,
+      },
+      {
+        key: "delete",
+        label: "删除",
+        action: () => store.deleteSelection(),
+        disabled: () => store.selectedIds.length === 0,
       },
     ],
   },
@@ -137,7 +232,9 @@ const menus = [
         key: "about",
         label: "关于 Sprite2D",
         action: () =>
-          store.setStatus("Sprite2D 精灵表编译工具 v0.1 — Vue + Canvas"),
+          store.setStatus(
+            "Sprite2D — 精灵表与图集工具（精灵表 = 源图，图集 = 导出打包）"
+          ),
       },
     ],
   },
@@ -186,7 +283,7 @@ onUnmounted(() => document.removeEventListener("click", onDocClick));
   position: absolute;
   top: 100%;
   left: 0;
-  min-width: 180px;
+  min-width: 200px;
   background: #fff;
   border: 1px solid var(--win-border, #d0d0d0);
   box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.12);

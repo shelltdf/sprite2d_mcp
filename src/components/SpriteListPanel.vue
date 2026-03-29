@@ -14,8 +14,8 @@
           <tr
             v-for="s in store.sprites"
             :key="s.id"
-            :class="{ active: s.id === store.selectedId }"
-            @click="store.select(s.id)"
+            :class="{ active: store.isSelected(s.id) }"
+            @click="onRowClick(s, $event)"
           >
             <td class="name-cell">{{ s.name }}</td>
             <td class="num">{{ s.frame.w }}</td>
@@ -24,7 +24,7 @@
         </tbody>
       </table>
       <p v-if="store.sprites.length === 0" class="empty-hint">
-        暂无精灵。使用工具栏「添加精灵」或菜单 编辑 → 添加精灵。
+        暂无精灵。使用工具栏「添加精灵」或菜单 精灵 → 添加精灵。
       </p>
     </div>
   </aside>
@@ -34,6 +34,16 @@
 import { useProjectStore } from "../stores/project.js";
 
 const store = useProjectStore();
+
+function onRowClick(s, e) {
+  if (e.shiftKey) {
+    store.addToSelection([s.id]);
+  } else if (e.ctrlKey || e.metaKey) {
+    store.toggleSelection(s.id);
+  } else {
+    store.setSelection([s.id]);
+  }
+}
 </script>
 
 <style scoped>

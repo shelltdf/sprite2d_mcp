@@ -2,7 +2,10 @@
   <footer class="status-bar">
     <span class="status-msg">{{ store.statusMessage }}</span>
     <span class="status-right">
-      <span v-if="store.selected" class="sel-tag">{{ store.selected.name }}</span>
+      <span v-if="store.selectedCount === 1 && store.selected" class="sel-tag">{{
+        store.selected.name
+      }}</span>
+      <span v-else-if="store.selectedCount > 1" class="sel-tag">{{ store.selectedCount }} 个精灵</span>
       <span class="zoom-tag">{{ zoomPct }}%</span>
     </span>
   </footer>

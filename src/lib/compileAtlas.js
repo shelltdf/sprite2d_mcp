@@ -32,6 +32,10 @@ export function layoutAtlas(sprites) {
       y: py,
       w,
       h,
+      sx: Math.round(s.frame.x),
+      sy: Math.round(s.frame.y),
+      sw: w,
+      sh: h,
       color: hashColor(s.id),
     };
   });
@@ -47,22 +51,94 @@ export function hashColor(id) {
 }
 
 /**
- * @param {import('../stores/project').Sprite[]} sprites
+ * @param {string} dataUrl
+ * @returns {Promise<HTMLImageElement>}
  */
-export async function buildAtlasBlob(sprites) {
+function loadImageFromDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("无法解码精灵表图片"));
+    img.src = dataUrl;
+  });
+}
+
+/**
+ * Clamp drawImage source rect to bitmap bounds.
+ * @param {HTMLImageElement} img
+ * @param {number} sx
+ * @param {number} sy
+ * @param {number} sw
+ * @param {number} sh
+ */
+function clampSourceRect(img, sx, sy, sw, sh) {
+  const iw = img.naturalWidth;
+  const ih = img.naturalHeight;
+  let x = sx;
+  let y = sy;
+  let w = sw;
+  let h = sh;
+  if (x < 0) {
+    w += x;
+    x = 0;
+  }
+  if (y < 0) {
+    h += y;
+    y = 0;
+  }
+  w = Math.max(0, Math.min(w, iw - x));
+  h = Math.max(0, Math.min(h, ih - y));
+  return { sx: x, sy: y, sw: w, sh: h };
+}
+
+/**
+ * @param {import('../stores/project').Sprite[]} sprites
+ * @param {string | null} [sheetDataUrl] 已导入的精灵表（data URL）；无则使用色块占位
+ */
+export async function buildAtlasBlob(sprites, sheetDataUrl = null) {
   const { width, height, placed } = layoutAtlas(sprites);
   const c = document.createElement("canvas");
   c.width = Math.max(4, width);
   c.height = Math.max(4, height);
   const ctx = c.getContext("2d");
+  if (!ctx) throw new Error("Canvas 不可用");
+
+  let sheetImg = null;
+  if (sheetDataUrl) {
+    try {
+      sheetImg = await loadImageFromDataUrl(sheetDataUrl);
+    } catch {
+      sheetImg = null;
+    }
+  }
+
   ctx.fillStyle = "#2a2a2e";
   ctx.fillRect(0, 0, c.width, c.height);
   for (const p of placed) {
-    ctx.fillStyle = p.color;
-    ctx.fillRect(p.x, p.y, p.w, p.h);
-    ctx.strokeStyle = "rgba(255,255,255,0.35)";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(p.x + 0.5, p.y + 0.5, p.w - 1, p.h - 1);
+    if (sheetImg && sheetImg.complete && sheetImg.naturalWidth > 0) {
+      const { sx, sy, sw, sh } = clampSourceRect(
+        sheetImg,
+        p.sx,
+        p.sy,
+        p.sw,
+        p.sh
+      );
+      if (sw > 0 && sh > 0) {
+        ctx.drawImage(sheetImg, sx, sy, sw, sh, p.x, p.y, p.w, p.h);
+      } else {
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+      }
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(p.x + 0.5, p.y + 0.5, p.w - 1, p.h - 1);
+    } else {
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x, p.y, p.w, p.h);
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(p.x + 0.5, p.y + 0.5, p.w - 1, p.h - 1);
+    }
   }
   const blob = await new Promise((resolve) =>
     c.toBlob((b) => resolve(b), "image/png")

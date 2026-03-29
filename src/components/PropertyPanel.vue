@@ -1,7 +1,11 @@
 <template>
   <aside class="win-panel">
     <div class="win-panel-title">精灵属性</div>
-    <div v-if="sel" class="prop-body">
+    <div v-if="store.selectedCount === 1 && sel" class="prop-body">
+      <p v-if="store.sheetWidth > 0" class="sheet-hint">
+        坐标相对精灵表底图：{{ store.sheetWidth }}×{{ store.sheetHeight }} px
+        <span v-if="store.sheetFileName" class="fname">{{ store.sheetFileName }}</span>
+      </p>
       <label class="field">
         <span>名称</span>
         <input v-model="name" type="text" @change="commitName">
@@ -35,8 +39,12 @@
         </div>
       </div>
     </div>
+    <div v-else-if="store.selectedCount > 1" class="prop-empty">
+      已选中 {{ store.selectedCount }} 个精灵。可在菜单「精灵」中使用复制、粘贴、删除，或使用
+      Ctrl+C / Ctrl+V / Delete。
+    </div>
     <div v-else class="prop-empty">
-      未选中精灵。在左侧列表或画布中选择一个精灵。
+      未选中精灵。在左侧列表或画布中点选；在空白处拖出框可选中多个。
     </div>
   </aside>
 </template>
@@ -105,6 +113,21 @@ const previewStyle = computed(() => {
   overflow: auto;
   flex: 1;
   min-height: 0;
+}
+
+.sheet-hint {
+  margin: 0;
+  font-size: 11px;
+  color: #555;
+  line-height: 1.4;
+  user-select: text;
+}
+
+.sheet-hint .fname {
+  display: block;
+  margin-top: 4px;
+  color: #888;
+  word-break: break-all;
 }
 
 .field {

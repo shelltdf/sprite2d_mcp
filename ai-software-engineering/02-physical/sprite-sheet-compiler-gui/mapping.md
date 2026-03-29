@@ -11,5 +11,6 @@
 | 属性面板 | `src/components/PropertyPanel.vue` |
 | 状态栏 | `src/components/StatusBar.vue` |
 | 全局状态 | `src/stores/project.js` |
-| 编译导出 | `src/lib/compileAtlas.js` |
+| 编译导出 / 底图切片 | `src/lib/compileAtlas.js` |
+| 图集 JSON 解析 | `src/lib/atlasFormat.js` |
 | Win 风格主题 | `src/styles/win-shell.css` |
